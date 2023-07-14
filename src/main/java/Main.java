@@ -3,12 +3,15 @@ import org.lwjgl.glfw.*;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.*;
 
-import java.nio.*;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 
 import static org.lwjgl.glfw.Callbacks.*;
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
-import static org.lwjgl.system.MemoryStack.*;
+import static org.lwjgl.opengl.GL20.*;
+import static org.lwjgl.opengl.GL30.glBindVertexArray;
+import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 import static org.lwjgl.system.MemoryUtil.*;
 
 abstract class Scene {
@@ -21,17 +24,139 @@ abstract class Scene {
 
 class EditorScene extends Scene {
 
+    public String vertexShaderSource = "#version 330 core\n" +
+            "\n" +
+            "layout (location=0) in vec3 attribute_position;\n" +
+            "layout (location=1) in vec4 attribute_color;\n" +
+            "\n" +
+            "out vec4 fragment_color;\n" +
+            "\n" +
+            "void main() {\n" +
+            "    fragment_color = attribute_color;\n" +
+            "    gl_Position = vec4(attribute_position, 1.0);\n" +
+            "}";
+
+    public String fragmentShaderSource = "#version 330 core\n" +
+            "\n" +
+            "in vec4 fragment_color;\n" +
+            "out vec4 color;\n" +
+            "\n" +
+            "void main() {\n" +
+            "    color = fragment_color;\n" +
+            "}";
+
+    public int vertexShaderId, fragmentShaderId, shaderProgramId, vertexAttributeId, vertexBufferId, elementBufferId;
+
+    public float[] vertexArray = {
+            // positions            // colors
+            -0.5f, -0.5f, 0f,       1.0f, 0f, 0f, 1f,   // bottom left vert
+            0f, 0.5f, 0f,           0f, 1f, 0f, 1f,     // top vert
+            0.5f, -0.5f, 0f,       0f, 0f, 1f, 1f       // bottom right vert
+    };
+
+    public int[] elementArray = {
+            // counterclockwise order
+            0, 2, 1
+    };
+
     public EditorScene() {
         super();
     }
 
     @Override
     public void init() {
+        // load and compile vertex shader
+        this.vertexShaderId = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(this.vertexShaderId, this.vertexShaderSource);
+        glCompileShader(this.vertexShaderId);
 
+        // check for errors
+        int success_vertex = glGetShaderi(this.vertexShaderId, GL_COMPILE_STATUS);
+        if(success_vertex == GL_FALSE) {
+            int length = glGetShaderi(this.vertexShaderId, GL_INFO_LOG_LENGTH);
+            System.out.println("Error compiling vertex shader");
+            String errorMessage = glGetShaderInfoLog(this.vertexShaderId, length);
+            System.out.println(":: Error message ::\n" + errorMessage + "\n");
+            assert false: "Right now we are failing on shader compilation failures";
+        }
+
+        // load and compile fragment shader
+        this.fragmentShaderId = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(this.fragmentShaderId, this.fragmentShaderSource);
+        glCompileShader(this.fragmentShaderId);
+
+        // check for errors
+        int success_fragment = glGetShaderi(this.fragmentShaderId, GL_COMPILE_STATUS);
+        if(success_fragment == GL_FALSE) {
+            int length = glGetShaderi(this.fragmentShaderId, GL_INFO_LOG_LENGTH);
+            System.out.println("Error compiling fragment shader");
+            String errorMessage = glGetShaderInfoLog(this.fragmentShaderId, length);
+            System.out.println(":: Error message ::\n" + errorMessage);
+            assert false: "Right now we are failing on shader compilation failures";
+        }
+
+        // creating and linking shaders to program
+        this.shaderProgramId = glCreateProgram();
+        glAttachShader(this.shaderProgramId, this.vertexShaderId);
+        glAttachShader(this.shaderProgramId, this.fragmentShaderId);
+        glLinkProgram(this.shaderProgramId);
+
+        // check for errors
+        int success_shader = glGetProgrami(this.shaderProgramId, GL_LINK_STATUS);
+        if(success_shader == GL_FALSE) {
+            int length = glGetProgrami(this.shaderProgramId, GL_INFO_LOG_LENGTH);
+            System.out.println("Error compiling linking shader program");
+            String errorMessage = glGetShaderInfoLog(this.shaderProgramId, length);
+            System.out.println(":: Error message ::\n" + errorMessage);
+            assert false: "Right now we are failing on shader compilation failures";
+        }
+
+        // create the vao, vbo and ebo
+        this.vertexAttributeId = glGenVertexArrays();
+        glBindVertexArray(this.vertexAttributeId);
+
+        // making and binding the vertex buffer
+        FloatBuffer vertexBuffer = BufferUtils.createFloatBuffer(this.vertexArray.length);
+        vertexBuffer.put(this.vertexArray).flip();
+        this.vertexBufferId = glGenBuffers();
+        glBindBuffer(GL_ARRAY_BUFFER, this.vertexBufferId);
+        glBufferData(GL_ARRAY_BUFFER, vertexBuffer, GL_STATIC_DRAW);
+
+        // making and binding the element buffer
+        IntBuffer elementBuffer = BufferUtils.createIntBuffer(this.elementArray.length);
+        elementBuffer.put(this.elementArray).flip();
+        this.elementBufferId = glGenBuffers();
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, this.elementBufferId);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, elementBuffer, GL_STATIC_DRAW);
+
+        // add it all to the vertex attribute object
+        int positionSize = 3;
+        int colorSize = 4;
+        int floatSizeInBytes = 4;
+        int vertexSizeInBytes = (positionSize + colorSize) * floatSizeInBytes;
+
+        glVertexAttribPointer(0, positionSize, GL_FLOAT, false, vertexSizeInBytes, NULL);
+        glEnableVertexAttribArray(0);
+
+        glVertexAttribPointer(1, colorSize, GL_FLOAT, false, vertexSizeInBytes, positionSize * floatSizeInBytes);
+        glEnableVertexAttribArray(1);
     }
 
     @Override
     public void update(float deltaTime) {
+        glUseProgram(this.shaderProgramId);
+
+        glBindVertexArray(this.vertexAttributeId);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+
+        glDrawElements(GL_TRIANGLES, elementArray.length, GL_UNSIGNED_INT, 0);
+
+        glDisableVertexAttribArray(0);
+        glDisableVertexAttribArray(1);
+        glBindVertexArray(0);
+
+        glUseProgram(0);
     }
 }
 
