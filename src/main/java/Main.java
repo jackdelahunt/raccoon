@@ -1,3 +1,4 @@
+import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
@@ -8,6 +9,7 @@ import org.lwjgl.opengl.*;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.util.ArrayList;
 
 import static org.lwjgl.glfw.Callbacks.*;
 import static org.lwjgl.glfw.GLFW.*;
@@ -17,6 +19,61 @@ import static org.lwjgl.opengl.GL30.glBindVertexArray;
 import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 import static org.lwjgl.stb.STBImage.*;
 import static org.lwjgl.system.MemoryUtil.*;
+
+class GameObject {
+    public String name;
+    public ArrayList<Component> components;
+
+    public GameObject(String name) {
+        this.name = name;
+        this.components = new ArrayList<Component>();
+    }
+
+    public void start() {
+        for (Component component : this.components) {
+            component.start();
+        }
+    }
+
+    public void update(float deltaTime) {
+        for (Component component : this.components) {
+            component.update(deltaTime);
+        }
+    }
+
+    @Nullable
+    public <T extends Component> T getComponent(Class<T> component) {
+        for(Component c : this.components) {
+            if(c.getClass().isAssignableFrom(component)) {
+                return component.cast(c);
+            }
+        }
+
+        return null;
+    }
+
+    public <T extends Component> void removeComponent(Class<T> component) {
+        for(int i = 0; i < this.components.size(); i++) {
+            Component c = this.components.get(i);
+            if(c.getClass().isAssignableFrom(component)) {
+                this.components.remove(i);
+                break;
+            }
+        }
+    }
+
+    public void addComponent(Component component) {
+        this.components.add(component);
+        component.gameObject = this;
+    }
+}
+
+abstract class Component {
+    GameObject gameObject = null;
+
+    public abstract void start();
+    public abstract void update(float deltaTime);
+}
 
 class Texture {
     public String filePath;
@@ -185,10 +242,13 @@ class Shader {
 }
 
 abstract class Scene {
-    public Scene() {}
+    public ArrayList<GameObject> gameObjects;
 
-    public abstract void init();
+    public Scene() {
+        this.gameObjects = new ArrayList<>();
+    }
 
+    public abstract void start();
     public abstract void update(float deltaTime);
 }
 
@@ -251,7 +311,7 @@ class EditorScene extends Scene {
     }
 
     @Override
-    public void init() {
+    public void start() {
 
         this.shader = new Shader(vertexShaderSource, fragmentShaderSource);
         this.shader.compile();
@@ -288,6 +348,10 @@ class EditorScene extends Scene {
 
         glVertexAttribPointer(2, UVSize, GL_FLOAT, false, vertexSizeInBytes, (positionSize + colorSize) * Float.BYTES);
         glEnableVertexAttribArray(2);
+
+        for (GameObject gameObject : this.gameObjects) {
+            gameObject.start();
+        }
     }
 
     @Override
@@ -306,6 +370,10 @@ class EditorScene extends Scene {
         glEnableVertexAttribArray(1);
 
         glDrawElements(GL_TRIANGLES, elementArray.length, GL_UNSIGNED_INT, 0);
+
+        for (GameObject gameObject : this.gameObjects) {
+            gameObject.update(deltaTime);
+        }
 
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);
@@ -474,7 +542,7 @@ class Window {
         float deltaTime = 0;
 
         this.currentScene = new EditorScene();
-        this.currentScene.init();
+        this.currentScene.start();
 
         while(!glfwWindowShouldClose(this.windowHandle)) {
             float startTime = Time.secondsSinceAppStart();
