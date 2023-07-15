@@ -14,57 +14,19 @@ import static org.lwjgl.opengl.GL30.glBindVertexArray;
 import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 import static org.lwjgl.system.MemoryUtil.*;
 
-abstract class Scene {
-    public Scene() {}
+class Shader {
+    public int shaderProgramId;
+    public String vertexShaderSource;
+    public String fragmentShaderSource;
+    public int vertexShaderId;
+    public int fragmentShaderId;
 
-    public abstract void init();
-
-    public abstract void update(float deltaTime);
-}
-
-class EditorScene extends Scene {
-
-    public String vertexShaderSource = "#version 330 core\n" +
-            "\n" +
-            "layout (location=0) in vec3 attribute_position;\n" +
-            "layout (location=1) in vec4 attribute_color;\n" +
-            "\n" +
-            "out vec4 fragment_color;\n" +
-            "\n" +
-            "void main() {\n" +
-            "    fragment_color = attribute_color;\n" +
-            "    gl_Position = vec4(attribute_position, 1.0);\n" +
-            "}";
-
-    public String fragmentShaderSource = "#version 330 core\n" +
-            "\n" +
-            "in vec4 fragment_color;\n" +
-            "out vec4 color;\n" +
-            "\n" +
-            "void main() {\n" +
-            "    color = fragment_color;\n" +
-            "}";
-
-    public int vertexShaderId, fragmentShaderId, shaderProgramId, vertexAttributeId, vertexBufferId, elementBufferId;
-
-    public float[] vertexArray = {
-            // positions            // colors
-            -0.5f, -0.5f, 0f,       1.0f, 0f, 0f, 1f,   // bottom left vert
-            0f, 0.5f, 0f,           0f, 1f, 0f, 1f,     // top vert
-            0.5f, -0.5f, 0f,       0f, 0f, 1f, 1f       // bottom right vert
-    };
-
-    public int[] elementArray = {
-            // counterclockwise order
-            0, 2, 1
-    };
-
-    public EditorScene() {
-        super();
+    public Shader(String vertexShaderSource, String fragmentShaderSource) {
+        this.vertexShaderSource = vertexShaderSource;
+        this.fragmentShaderSource = fragmentShaderSource;
     }
 
-    @Override
-    public void init() {
+    public void compile() {
         // load and compile vertex shader
         this.vertexShaderId = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(this.vertexShaderId, this.vertexShaderSource);
@@ -110,6 +72,74 @@ class EditorScene extends Scene {
             System.out.println(":: Error message ::\n" + errorMessage);
             assert false: "Right now we are failing on shader compilation failures";
         }
+    }
+
+    public void bind() {
+        glUseProgram(this.shaderProgramId);
+    }
+
+    public void unbind() {
+        glUseProgram(0);
+    }
+}
+
+abstract class Scene {
+    public Scene() {}
+
+    public abstract void init();
+
+    public abstract void update(float deltaTime);
+}
+
+class EditorScene extends Scene {
+
+    public String vertexShaderSource = "#version 330 core\n" +
+            "\n" +
+            "layout (location=0) in vec3 attribute_position;\n" +
+            "layout (location=1) in vec4 attribute_color;\n" +
+            "\n" +
+            "out vec4 fragment_color;\n" +
+            "\n" +
+            "void main() {\n" +
+            "    fragment_color = attribute_color;\n" +
+            "    gl_Position = vec4(attribute_position, 1.0);\n" +
+            "}";
+
+    public String fragmentShaderSource = "#version 330 core\n" +
+            "\n" +
+            "in vec4 fragment_color;\n" +
+            "out vec4 color;\n" +
+            "\n" +
+            "void main() {\n" +
+            "    color = fragment_color;\n" +
+            "}";
+
+    public int vertexAttributeId, vertexBufferId, elementBufferId;
+    public Shader shader;
+
+    public float[] vertexArray = {
+            // positions            // colors
+            0.5f, -0.5f, 0f,       1.0f, 0f, 0f, 1f,   // bottom right
+            -0.5f, -0.5f, 0f,           0f, 1f, 0f, 1f,     // bottom left
+            -0.5f, 0.5f, 0f,       0f, 0f, 1f, 1f,       // top left
+            0.5f, 0.5f, 0f,       0f, 1f, 0f, 1f,       // top right
+    };
+
+    public int[] elementArray = {
+            // counterclockwise order
+            0, 2, 1,
+            0, 2, 3
+    };
+
+    public EditorScene() {
+        super();
+    }
+
+    @Override
+    public void init() {
+
+        this.shader = new Shader(vertexShaderSource, fragmentShaderSource);
+        this.shader.compile();
 
         // create the vao, vbo and ebo
         this.vertexAttributeId = glGenVertexArrays();
@@ -144,7 +174,7 @@ class EditorScene extends Scene {
 
     @Override
     public void update(float deltaTime) {
-        glUseProgram(this.shaderProgramId);
+        this.shader.bind();
 
         glBindVertexArray(this.vertexAttributeId);
         glEnableVertexAttribArray(0);
@@ -156,7 +186,7 @@ class EditorScene extends Scene {
         glDisableVertexAttribArray(1);
         glBindVertexArray(0);
 
-        glUseProgram(0);
+        this.shader.unbind();
     }
 }
 
