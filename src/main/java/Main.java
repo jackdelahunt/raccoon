@@ -1,8 +1,11 @@
+import org.joml.Matrix4f;
+import org.joml.Vector2f;
+import org.joml.Vector3f;
 import org.lwjgl.*;
 import org.lwjgl.glfw.*;
 import org.lwjgl.opengl.*;
-import org.lwjgl.system.*;
 
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 
@@ -12,7 +15,85 @@ import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL20.*;
 import static org.lwjgl.opengl.GL30.glBindVertexArray;
 import static org.lwjgl.opengl.GL30.glGenVertexArrays;
+import static org.lwjgl.stb.STBImage.*;
 import static org.lwjgl.system.MemoryUtil.*;
+
+class Texture {
+    public String filePath;
+    public int textureId;
+
+    public Texture(String filePath) {
+        this.filePath = filePath;
+
+        this.textureId = glGenTextures();
+        this.bind();
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); // repeat in X
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT); // repeat in Y
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); // nearest neighbour sampling (pixelated), when stretching
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST); // nearest neighbour sampling (pixelated), when shrinking
+
+        IntBuffer width = BufferUtils.createIntBuffer(1);
+        IntBuffer height = BufferUtils.createIntBuffer(1);
+        IntBuffer channels = BufferUtils.createIntBuffer(1);
+        stbi_set_flip_vertically_on_load(true); // orientate it the correct way
+        ByteBuffer imageBuffer = stbi_load(this.filePath, width, height, channels, 0); // these int buffers get set by stbi when reading the texture
+        assert imageBuffer != null : "Failed to load image " + this.filePath;
+
+        int image_type = 0;
+        if(channels.get(0) == 3) {
+            image_type = GL_RGB;
+        } else if(channels.get(0) == 4) {
+            image_type = GL_RGBA;
+        } else {
+            assert false : "Unknown texture format";
+        }
+
+        glTexImage2D(GL_TEXTURE_2D, 0, image_type, width.get(0), height.get(0), 0, image_type, GL_UNSIGNED_BYTE, imageBuffer);
+
+        stbi_image_free(imageBuffer);
+    }
+
+    public void bind() {
+        glBindTexture(GL_TEXTURE_2D, this.textureId);
+    }
+
+    public void unbind() {
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+}
+
+class Camera {
+    public Vector2f position;
+    public Matrix4f projectionMatrix, viewMatrix;
+
+    public Camera(Vector2f position) {
+        this.position = position;
+        this.projectionMatrix = new Matrix4f();
+        this.viewMatrix = new Matrix4f();
+
+        this.adjustProjection();
+    }
+
+    public void adjustProjection() {
+        projectionMatrix.identity();
+        projectionMatrix.ortho(0f, 640f, 0f, 480f, 0, 100);
+    }
+
+    public Matrix4f getViewMatrix() {
+        Vector3f cameraFront = new Vector3f(0f, 0f, -1f); // where the camera is looking
+        Vector3f cameraUp = new Vector3f(0f, 1f, 0f);
+        this.viewMatrix.identity();
+        this.viewMatrix.lookAt(
+            new Vector3f(this.position.x, this.position.y, 20f),    // where the camera is
+            cameraFront.add(this.position.x, this.position.y, 0f),  // where the camera is looking
+            cameraUp                                                   // also just needs the up vector
+        );
+
+        return this.viewMatrix;
+    }
+}
 
 class Shader {
     public int shaderProgramId;
@@ -81,6 +162,26 @@ class Shader {
     public void unbind() {
         glUseProgram(0);
     }
+
+    public void uniformMatrix4Float(String variableName, Matrix4f matrix) {
+        this.bind();
+        int location = glGetUniformLocation(this.shaderProgramId, variableName);
+        FloatBuffer buffer = BufferUtils.createFloatBuffer(16 /*    4 * 4   */);
+        matrix.get(buffer);
+        glUniformMatrix4fv(location, false, buffer);
+    }
+
+    public void uniformFloat(String variableName, float value) {
+        this.bind();
+        int location = glGetUniformLocation(this.shaderProgramId, variableName);
+        glUniform1f(location, value);
+    }
+
+    public void uniformTextureSlot(String variableName, int slot) {
+        this.bind();
+        int location = glGetUniformLocation(this.shaderProgramId, variableName);
+        glUniform1i(location, slot);
+    }
 }
 
 abstract class Scene {
@@ -97,32 +198,43 @@ class EditorScene extends Scene {
             "\n" +
             "layout (location=0) in vec3 attribute_position;\n" +
             "layout (location=1) in vec4 attribute_color;\n" +
+            "layout (location=2) in vec2 attribute_uv_coords;\n" +
+            "\n" +
+            "uniform mat4 uniform_projection_matrix;\n" +
+            "uniform mat4 uniform_view_matrix;\n" +
             "\n" +
             "out vec4 fragment_color;\n" +
+            "out vec2 fragment_uv_coords;\n" +
             "\n" +
             "void main() {\n" +
             "    fragment_color = attribute_color;\n" +
-            "    gl_Position = vec4(attribute_position, 1.0);\n" +
+            "    fragment_uv_coords = attribute_uv_coords;\n" +
+            "    gl_Position = uniform_projection_matrix * uniform_view_matrix * vec4(attribute_position, 1.0);\n" +
             "}";
 
     public String fragmentShaderSource = "#version 330 core\n" +
             "\n" +
+            "uniform sampler2D uniform_texture;\n" +
+            "\n" +
             "in vec4 fragment_color;\n" +
+            "in vec2 fragment_uv_coords;\n" +
             "out vec4 color;\n" +
             "\n" +
             "void main() {\n" +
-            "    color = fragment_color;\n" +
+            "    color = texture(uniform_texture, fragment_uv_coords);\n" +
             "}";
 
     public int vertexAttributeId, vertexBufferId, elementBufferId;
     public Shader shader;
+    public Texture texture;
+    public Camera camera;
 
     public float[] vertexArray = {
-            // positions            // colors
-            0.5f, -0.5f, 0f,       1.0f, 0f, 0f, 1f,   // bottom right
-            -0.5f, -0.5f, 0f,           0f, 1f, 0f, 1f,     // bottom left
-            -0.5f, 0.5f, 0f,       0f, 0f, 1f, 1f,       // top left
-            0.5f, 0.5f, 0f,       0f, 1f, 0f, 1f,       // top right
+            // positions            // colors               // UV coords
+            100f, 0f, 0f,           1.0f, 0f, 0f, 1f,       1f, 0f,             // bottom right
+            0f, 0f, 0f,             0f, 1f, 0f, 1f,         0f, 0f,             // bottom left
+            0f, 100f, 0f,           0f, 0f, 1f, 1f,         0f, 1f,             // top left
+            100f, 100f, 0f,         0f, 1f, 0f, 1f,         1f, 1f              // top right
     };
 
     public int[] elementArray = {
@@ -133,6 +245,9 @@ class EditorScene extends Scene {
 
     public EditorScene() {
         super();
+
+        this.camera = new Camera(new Vector2f(0f, 0f));
+        this.texture = new Texture("assets/textures/raccoon.png");
     }
 
     @Override
@@ -162,19 +277,29 @@ class EditorScene extends Scene {
         // add it all to the vertex attribute object
         int positionSize = 3;
         int colorSize = 4;
-        int floatSizeInBytes = 4;
-        int vertexSizeInBytes = (positionSize + colorSize) * floatSizeInBytes;
+        int UVSize = 2;
+        int vertexSizeInBytes = (positionSize + colorSize + UVSize) * Float.BYTES;
 
         glVertexAttribPointer(0, positionSize, GL_FLOAT, false, vertexSizeInBytes, NULL);
         glEnableVertexAttribArray(0);
 
-        glVertexAttribPointer(1, colorSize, GL_FLOAT, false, vertexSizeInBytes, positionSize * floatSizeInBytes);
+        glVertexAttribPointer(1, colorSize, GL_FLOAT, false, vertexSizeInBytes, positionSize * Float.BYTES);
         glEnableVertexAttribArray(1);
+
+        glVertexAttribPointer(2, UVSize, GL_FLOAT, false, vertexSizeInBytes, (positionSize + colorSize) * Float.BYTES);
+        glEnableVertexAttribArray(2);
     }
 
     @Override
     public void update(float deltaTime) {
         this.shader.bind();
+
+        this.shader.uniformTextureSlot("uniform_texture", 0);
+        glActiveTexture(GL_TEXTURE0);
+        this.texture.bind();
+
+        this.shader.uniformMatrix4Float("uniform_projection_matrix", camera.projectionMatrix);
+        this.shader.uniformMatrix4Float("uniform_view_matrix", camera.getViewMatrix());
 
         glBindVertexArray(this.vertexAttributeId);
         glEnableVertexAttribArray(0);
@@ -305,7 +430,7 @@ class Window {
         this.height = height;
         this.title = title;
         this.windowHandle = 0;
-        this.currentScene = new EditorScene();
+        this.currentScene = null;
     }
 
     public void init() {
@@ -348,7 +473,8 @@ class Window {
 
         float deltaTime = 0;
 
-        currentScene.init();
+        this.currentScene = new EditorScene();
+        this.currentScene.init();
 
         while(!glfwWindowShouldClose(this.windowHandle)) {
             float startTime = Time.secondsSinceAppStart();
@@ -375,7 +501,7 @@ class Window {
 public class Main {
     public static void main(String[] args) {
 
-        Window window = new Window(640, 420, "Game engine");
+        Window window = new Window(960, 640, "Game engine");
         window.init();
         window.run();
     }
