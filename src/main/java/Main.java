@@ -154,17 +154,25 @@ class Camera {
 
 class Shader {
     public int shaderProgramId;
+    public String vertexShaderFilePath;
+    public String fragmentShadeFilePath;
     public String vertexShaderSource;
     public String fragmentShaderSource;
     public int vertexShaderId;
     public int fragmentShaderId;
 
-    public Shader(String vertexShaderSource, String fragmentShaderSource) {
-        this.vertexShaderSource = vertexShaderSource;
-        this.fragmentShaderSource = fragmentShaderSource;
+    public Shader(String vertexShaderFilePath, String fragmentShadeFilePath) {
+        this.vertexShaderFilePath = vertexShaderFilePath;
+        this.fragmentShadeFilePath = fragmentShadeFilePath;
     }
 
     public void compile() {
+
+        this.vertexShaderSource = Utils.readFileAsStringOrNull(this.vertexShaderFilePath);
+        this.fragmentShaderSource = Utils.readFileAsStringOrNull(this.fragmentShadeFilePath);
+        assert this.vertexShaderSource != null;
+        assert this.fragmentShaderSource != null;
+
         // load and compile vertex shader
         this.vertexShaderId = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(this.vertexShaderId, this.vertexShaderSource);
@@ -254,36 +262,6 @@ abstract class Scene {
 
 class EditorScene extends Scene {
 
-    public String vertexShaderSource = "#version 330 core\n" +
-            "\n" +
-            "layout (location=0) in vec3 attribute_position;\n" +
-            "layout (location=1) in vec4 attribute_color;\n" +
-            "layout (location=2) in vec2 attribute_uv_coords;\n" +
-            "\n" +
-            "uniform mat4 uniform_projection_matrix;\n" +
-            "uniform mat4 uniform_view_matrix;\n" +
-            "\n" +
-            "out vec4 fragment_color;\n" +
-            "out vec2 fragment_uv_coords;\n" +
-            "\n" +
-            "void main() {\n" +
-            "    fragment_color = attribute_color;\n" +
-            "    fragment_uv_coords = attribute_uv_coords;\n" +
-            "    gl_Position = uniform_projection_matrix * uniform_view_matrix * vec4(attribute_position, 1.0);\n" +
-            "}";
-
-    public String fragmentShaderSource = "#version 330 core\n" +
-            "\n" +
-            "uniform sampler2D uniform_texture;\n" +
-            "\n" +
-            "in vec4 fragment_color;\n" +
-            "in vec2 fragment_uv_coords;\n" +
-            "out vec4 color;\n" +
-            "\n" +
-            "void main() {\n" +
-            "    color = texture(uniform_texture, fragment_uv_coords);\n" +
-            "}";
-
     public int vertexAttributeId, vertexBufferId, elementBufferId;
     public Shader shader;
     public Texture texture;
@@ -308,13 +286,12 @@ class EditorScene extends Scene {
 
         this.camera = new Camera(new Vector2f(0f, 0f));
         this.texture = new Texture("assets/textures/raccoon.png");
+        this.shader = new Shader("assets/shaders/default.vert", "assets/shaders/default.frag");
+        this.shader.compile();
     }
 
     @Override
     public void start() {
-
-        this.shader = new Shader(vertexShaderSource, fragmentShaderSource);
-        this.shader.compile();
 
         // create the vao, vbo and ebo
         this.vertexAttributeId = glGenVertexArrays();
